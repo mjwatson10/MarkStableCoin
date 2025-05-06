@@ -148,7 +148,7 @@ contract MSCEngine is ReentrancyGuard {
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
-    function burnMsc(uint256 amount) external moreThanZero(amount) nonReentrant {
+    function burnMsc(uint256 amount) public moreThanZero(amount) nonReentrant {
         s_mscMinted[msg.sender] -= amount;
         bool success = i_msc.transferFrom(msg.sender, address(this), amount);
         if (!success) {
