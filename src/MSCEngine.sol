@@ -15,6 +15,7 @@ error MSCEngine__BreaksHealthFactor(uint256 healthFactor);
 error MSCEngine__FailedToMint();
 error MSCEngine__TransferFailed();
 error MSCEngine__HealthFactorIsOk();
+error MSCEngine__HealthFactorNotImproved();
 
 /*
  *@title MSCEngine
@@ -141,7 +142,7 @@ contract MSCEngine is ReentrancyGuard {
         moreThanZero(amountCollateral)
         nonReentrant
     {
-        _redeemCollateral();
+        _redeemCollateral(tokenCollateralAddress, amountCollateral, msg.sender, msg.sender);
     }
 
     /**
@@ -160,13 +161,8 @@ contract MSCEngine is ReentrancyGuard {
     }
 
     function burnMsc(uint256 amount) public moreThanZero(amount) nonReentrant {
-        s_mscMinted[msg.sender] -= amount;
-        bool success = i_msc.transferFrom(msg.sender, address(this), amount);
-        if (!success) {
-            revert MSCEngine__TransferFailed();
-        }
-        i_msc.burn(amount);
         _revertIfHealthFactorIsBroken(msg.sender);
+        _burnMsc(amount, msg.sender, msg.sender);
     }
 
     /**
@@ -192,11 +188,34 @@ contract MSCEngine is ReentrancyGuard {
         uint256 tokenAmountFromDebtCovered = getTokenAmountFromUsd(collateral, debtToCover);
         uint256 bonusCollateral = (tokenAmountFromDebtCovered * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
         uint256 totalCollateralToRedeem = tokenAmountFromDebtCovered + bonusCollateral;
+        _redeemCollateral(collateral, totalCollateralToRedeem, user, msg.sender);
+
+        _burnMsc(debtToCover, user, msg.sender);
+
+        uint256 endingUserHealthFactor = _healthFactor(user);
+        if (endingUserHealthFactor <= startingUserHealthFactor) {
+            revert MSCEngine__HealthFactorNotImproved();
+        }
+
+        _revertIfHealthFactorIsBroken(msg.sender);
     }
 
     function getHealthFactor() external view returns (uint256) {}
 
     //// Private & Internal View Functions ////
+
+    /**
+     * @dev low level internal function, do not call unless the function calling it is checking health factors being broken
+     */
+    function _burnMsc(uint256 amount, address onBehalfOf, address mscFrom) private {
+        s_mscMinted[onBehalfOf] -= amount;
+        bool success = i_msc.transferFrom(mscFrom, address(this), amount);
+        if (!success) {
+            revert MSCEngine__TransferFailed();
+        }
+        i_msc.burn(amount);
+    }
+
     function _redeemCollateral(address tokenCollateralAddress, uint256 amountCollateral, address from, address to)
         private
     {
@@ -258,5 +277,13 @@ contract MSCEngine is ReentrancyGuard {
         // 1 eth = 1000000000000000000 wei
         // the returned value from Chainlink will be 1000 * 1e8 (ETH/USD has 8 decimals)
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
+    }
+
+    function getAccountInfo(address user)
+        external
+        view
+        returns (uint256 totalMscMinted, uint256 collateralValueInUsd)
+    {
+        (totalMscMinted, collateralValueInUsd) = _getAccountInfor(user);
     }
 }
