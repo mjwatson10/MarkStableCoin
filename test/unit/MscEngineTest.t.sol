@@ -9,11 +9,14 @@ import {
     MSCEngine__MustBeGreaterThanZero,
     MSCEngine__TokenAddressesLengthNotEqualToPriceFeedAddressesLength,
     MSCEngine__TokenNotWhitelisted,
-    MSCEngine__FailedToTransfer
+    MSCEngine__FailedToTransfer,
+    MSCEngine__BreaksHealthFactor
 } from "../../src/MSCEngine.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {MockFailedTransferFrom} from "../mocks/MockFailedTransferFrom.sol";
 import {console} from "forge-std/console.sol";
+import {MockV3Aggregator} from "../mocks/MockV3Aggregator.sol";
 
 contract MscEngineTest is Test {
     DeployMSC deployMSC;
@@ -25,9 +28,14 @@ contract MscEngineTest is Test {
     address wbtcUsdPriceFeed;
     address wbtc;
 
+    uint256 amountCollateral = 10 ether;
+    uint256 amountToMint = 100 ether;
+
     address public USER = makeAddr("user");
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
     uint256 public constant STARTING_ERC20_BALANCE = 10 ether;
+    uint256 public constant MIN_HEALTH_FACTOR = 1e18;
+    uint256 public constant LIQUIDATION_THRESHOLD = 50;
 
     function setUp() public {
         deployMSC = new DeployMSC();
@@ -74,6 +82,24 @@ contract MscEngineTest is Test {
     //////////////////////////////
     ///Deposit Collateral Tests///
     //////////////////////////////
+
+    function testRevertsIfTransferFromFails() public {
+        address owner = msg.sender;
+        vm.prank(owner);
+        MockFailedTransferFrom mockCollateralToken = new MockFailedTransferFrom();
+        tokenAddresses = [address(mockCollateralToken)];
+        priceFeedAddresses = [ethUsdPriceFeed];
+        // MSCEngine receives the third parameter as mscAddress, not the tokenAddress used as collateral.
+        vm.prank(owner);
+        MSCEngine mockDsce = new MSCEngine(tokenAddresses, priceFeedAddresses, address(msc));
+        mockCollateralToken.mint(USER, AMOUNT_COLLATERAL);
+        vm.startPrank(USER);
+        ERC20Mock(address(mockCollateralToken)).approve(address(mockDsce), AMOUNT_COLLATERAL);
+        // Act / Assert
+        vm.expectRevert(MSCEngine__FailedToTransfer.selector);
+        mockDsce.depositCollateral(address(mockCollateralToken), AMOUNT_COLLATERAL);
+        vm.stopPrank();
+    }
 
     function testRevertsIfTokenNotWhitelisted() public {
         ERC20Mock whateverToken = new ERC20Mock();
@@ -130,6 +156,20 @@ contract MscEngineTest is Test {
         vm.stopPrank();
     }
 
+    function testRevertsIfMintedMscBreaksHealthFactor() public {
+        (, int256 price,,,) = MockV3Aggregator(ethUsdPriceFeed).latestRoundData();
+        amountToMint =
+            (amountCollateral * (uint256(price) * mscEngine.getAdditionalFeedPrecision())) / mscEngine.getPrecision();
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(mscEngine), amountCollateral);
+
+        uint256 expectedHealthFactor =
+            mscEngine.calculateHealthFactor(amountToMint, mscEngine.getUsdValue(weth, amountCollateral));
+        vm.expectRevert(abi.encodeWithSelector(MSCEngine__BreaksHealthFactor.selector, expectedHealthFactor));
+        mscEngine.depositCollateralAndMintMsc(weth, amountCollateral, amountToMint);
+        vm.stopPrank();
+    }
+
     /////////////////////////////
     ///Redeem Collateral Tests///
     /////////////////////////////
@@ -164,5 +204,56 @@ contract MscEngineTest is Test {
         ERC20Mock(address(msc)).approve(address(mscEngine), redeemAmount);
         mscEngine.redeemCollateralForMsc(weth, redeemAmount, redeemAmount);
         vm.stopPrank();
+    }
+
+    /////////////////////////////
+    //////View & Pure Tests//////
+    /////////////////////////////
+    function testGetMsc() public view {
+        address mscAddress = mscEngine.getMsc();
+        assertEq(mscAddress, address(msc));
+    }
+
+    function testGetCollateralTokenPriceFeed() public view {
+        address priceFeed = mscEngine.getCollateralTokenPriceFeed(weth);
+        assertEq(priceFeed, ethUsdPriceFeed);
+    }
+
+    function testGetCollateralTokens() public view {
+        address[] memory collateralTokens = mscEngine.getCollateralTokens();
+        assertEq(collateralTokens[0], weth);
+    }
+
+    function testGetMinHealthFactor() public view {
+        uint256 minHealthFactor = mscEngine.getMinHealthFactor();
+        assertEq(minHealthFactor, MIN_HEALTH_FACTOR);
+    }
+
+    function testGetLiquidationThreshold() public view {
+        uint256 liquidationThreshold = mscEngine.getLiquidationThreshold();
+        assertEq(liquidationThreshold, LIQUIDATION_THRESHOLD);
+    }
+
+    function testGetAccountCollateralValueFromInformation() public depositedCollateral {
+        (, uint256 collateralValue) = mscEngine.getAccountInfo(USER);
+        uint256 expectedCollateralValue = mscEngine.getUsdValue(weth, amountCollateral);
+        assertEq(collateralValue, expectedCollateralValue);
+    }
+
+    function testGetCollateralBalanceOfUser() public depositedCollateral {
+        uint256 collateralBalance = mscEngine.getCollateralBalanceOfUser(USER, weth);
+        assertEq(collateralBalance, amountCollateral);
+    }
+
+    function testGetAccountCollateralValue() public depositedCollateral {
+        uint256 collateralValue = mscEngine.getAccountCollateralValue(USER);
+        uint256 expectedCollateralValue = mscEngine.getUsdValue(weth, amountCollateral);
+        assertEq(collateralValue, expectedCollateralValue);
+    }
+
+    function testLiquidationPrecision() public view {
+        uint256 expectedLiquidationPrecision = 100;
+        uint256 actualLiquidationPrecision = mscEngine.getLiquidationPrecision();
+        assertEq(actualLiquidationPrecision, expectedLiquidationPrecision);
     }
 }
