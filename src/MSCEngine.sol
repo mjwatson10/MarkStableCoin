@@ -5,6 +5,7 @@ import {MarkStablecoin} from "./MarkStablecoin.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import {OracleLib} from "./libraries/OracleLib.sol";
 
 //// Errors ////
 error MSCEngine__MustBeGreaterThanZero();
@@ -36,6 +37,9 @@ error MSCEngine__HealthFactorNotImproved();
  * @notice this contract is very loosely based on the MakerDAO DSS (DAI) system
  */
 contract MSCEngine is ReentrancyGuard {
+    /// Types ///
+    using OracleLib for AggregatorV3Interface;
+
     //// State Variables ////
     uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
     uint256 private constant PRECISION = 1e18;
@@ -277,7 +281,7 @@ contract MSCEngine is ReentrancyGuard {
 
     function getTokenAmountFromUsd(address token, uint256 usdAmountInWei) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.staleCheckLatestRoundData();
         return (usdAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION);
     }
 
@@ -292,7 +296,7 @@ contract MSCEngine is ReentrancyGuard {
 
     function getUsdValue(address token, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.staleCheckLatestRoundData();
         // 1 eth = 1000000000000000000 wei
         // the returned value from Chainlink will be 1000 * 1e8 (ETH/USD has 8 decimals)
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;

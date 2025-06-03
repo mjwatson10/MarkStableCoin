@@ -8,6 +8,7 @@ import {MarkStablecoin} from "../../src/MarkStablecoin.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Handler} from "./Handler.t.sol";
+import {console} from "forge-std/console.sol";
 
 // Have our invariants hold true for all test runs
 
@@ -36,7 +37,22 @@ contract Invariants is Test {
 
         uint256 wethValue = mscEngine.getUsdValue(weth, totalWethValue);
         uint256 wbtcValue = mscEngine.getUsdValue(wbtc, totalWbtcValue);
+        console.log("wethValue", wethValue);
+        console.log("wbtcValue", wbtcValue);
+        console.log("totalSupply", totalSupply);
+        console.log("Times mint called: ", handler.timeMintIsCalled());
 
         assert(wethValue + wbtcValue >= totalSupply);
+    }
+
+    function invariant_gettersShouldNotRevert() public view {
+        mscEngine.getCollateralTokens();
+        mscEngine.getCollateralTokenPriceFeed(weth);
+        mscEngine.getMsc();
+        mscEngine.getMinHealthFactor();
+        mscEngine.getLiquidationThreshold();
+        mscEngine.getPrecision();
+        mscEngine.getLiquidationBonus();
+        mscEngine.getAdditionalFeedPrecision();
     }
 }
